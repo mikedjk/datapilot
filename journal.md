@@ -242,3 +242,31 @@ Face au prompt géant : la fenêtre de contexte est limitée, chaque appel relir
 Par exemple Chroma, Qdrant ou pgvector (extension PostgreSQL). On les préfère à FAISS quand il y a beaucoup de documents, des filtres sur les métadonnées (date, source, droits d’accès), des mises à jour ou suppressions fréquentes, de la persistance, ou plusieurs utilisateurs, car FAISS ici est reconstruit en mémoire à chaque démarrage.
 
 # Etape 9
+
+1. Pourquoi \{.*\} doit-il être gourmand ?
+Un JSON peut contenir des objets imbriqués, par exemple params. Avec .*? (paresseux), la regex s’arrête au premier } et coupe l’objet en plein milieu. Je l’ai vérifié sur {"action": "query_database", "params": {"a": 1}, "input": "SELECT 1"} :
+
+gourmand : le JSON complet est récupéré ;
+paresseux : on obtient {"action": "query_database", "params": {"a": 1}, donc json.loads échoue.
+
+Le gourmand va du premier { au dernier }. Sa limite : si le LLM écrit deux objets JSON dans la même réponse, ils seront fusionnés en un texte invalide. Dans ce cas, ParseError renvoie un message d’erreur au LLM, qui peut se corriger.
+
+2. Pourquoi renvoyer un RouteResult d’erreur plutôt que lever une exception ?
+Le destinataire du message est le LLM, pas le programme. La boucle de l’étape 10 renvoie ce message au modèle sous la forme « ERREUR DE FORMAT : … », et il peut alors corriger son outil ou son JSON. Une exception arrêterait l’agent et ferait planter l’interface. C’est le même principe que pour SQLTool.run à l’étape 6.
+
+3. Que modifier pour ajouter un troisième outil ?
+Trois endroits seulement :
+
+créer la classe de l’outil dans tools.py, avec name, description et run(texte) -> str ;
+l’ajouter au dictionnaire tools dans build_agent() ;
+le décrire dans le system prompt de prompts.py : nom, quand l’utiliser, ce que contient input.
+
+route_query ne change pas, car il cherche simplement decision.action dans le dictionnaire. C’est l’avantage du routing par dictionnaire.
+
+4. Avantage de « n’importe quel objet qui a une méthode run » pour les tests ?
+On peut remplacer les vrais outils par des doublons (fakes) : sans base, sans FAISS, sans téléchargement de modèle. Les tests sont rapides et toujours identiques (8 tests en 0,11 s). Le guide l’illustre avec FakeLLM à l’étape 11.
+
+5. Tool calling natif contre version manuelle ?
+
+Le natif apporte : un format de sortie garanti par l’API, avec des schémas typés pour les arguments. Il y a moins de parsing défensif et moins d’erreurs de JSON, surtout avec un petit modèle.
+la version manuelle t’a fait comprendre : que le LLM ne fait que proposer du texte et que c’est Python qui exécute. Elle a aussi montré les modes d’échec concrets (JSON mal formé, outil inventé, clé action_input à la place de input) et pourquoi un parseur tolérant et des messages d’erreur sont nécessaires. C’est ce qui garantit que la base ne peut pas être modifiée par le modèle.
