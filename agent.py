@@ -103,3 +103,119 @@ def route_query(llm_output: str, tools: dict) -> RouteResult:
         tool_input=decision.input,
         thought=decision.thought,
     )
+
+
+
+@dataclass
+class AgentResponse:
+    answer: str
+    steps: list[RouteResult] = field(default_factory=list)
+
+
+class Agent:
+    """Boucle ReAct : le LLM décide -> route_query exécute -> OBSERVATION -> ..."""
+
+    def __init__(self, llm, tools: dict, system_prompt: str,
+                 max_steps: int = 5, max_history_turns: int = 6) -> None:
+        self.llm = llm
+        self.tools = tools
+        self.max_steps = max_steps
+        self.conversation = Conversation(system_prompt, max_turns=max_history_turns)
+
+    def ask(self, question: str) -> AgentResponse:
+        self.conversation.add_user(question)
+        scratchpad = self.conversation.messages()   # copie : le brouillon est jetable
+        steps: list[RouteResult] = []
+        answer = None
+
+        try:
+            for _ in range(self.max_steps):
+                raw = self.llm.chat(scratchpad, json_mode=True)
+                result = route_query(raw, self.tools)
+                steps.append(result)
+                logger.info("étape %d : %s %s", len(steps), result.kind, result.tool or "")
+
+                if result.kind == "final":
+                    answer = result.content
+                    break
+
+                # Sinon : le LLM doit voir ce qu'il a demandé ET le résultat
+                scratchpad.append({"role": "assistant", "content": raw})
+                if result.kind == "error":
+                    observation = f"ERREUR DE FORMAT : {result.content}"
+                else:
+                    observation = f"OBSERVATION ({result.tool}) :\n{result.content}"
+                scratchpad.append({"role": "user", "content": observation})
+
+            if answer is None:
+                # Limite atteinte : on force une réponse finale avec ce qu'on a
+                scratchpad.append({
+                    "role": "user",
+                    "content": ("Tu as atteint la limite d'étapes. Donne maintenant ta réponse "
+                                "finale avec les informations déjà obtenues (action "
+                                "final_answer). Si elles sont insuffisantes, dis-le clairement."),
+                })
+                raw = self.llm.chat(scratchpad, json_mode=True)
+                result = route_query(raw, self.tools)
+                steps.append(result)
+                answer = (result.content if result.kind == "final" else
+                          "Désolé, je n'ai pas réussi à répondre à cette question. "
+                          "Pouvez-vous la reformuler ?")
+        except LLMError as exc:
+            logger.error("LLM indisponible : %s", exc)
+            answer = ("Le moteur LLM est indisponible. Lancez l'application Ollama "
+                      "ou 'ollama serve', puis réessayez.")
+
+        self.conversation.add_assistant(answer)      # seule la réponse finale est mémorisée
+        return AgentResponse(answer=answer, steps=steps)
+
+    def reset(self) -> None:
+        self.conversation.reset()
+
+
+def build_agent():
+    """Assemble le LLM, les outils, le prompt et l'agent. Renvoie (agent, llm)."""
+    import config
+    from llm_client import LLMClient
+    from prompts import build_system_prompt
+    from tools import DocSearchTool, SQLTool, load_corpus, load_embedder
+
+    llm = LLMClient(
+        config.LLM_MODEL, config.OLLAMA_URL,
+        temperature=config.LLM_TEMPERATURE, timeout=config.LLM_TIMEOUT,
+        num_ctx=config.LLM_NUM_CTX,
+        log_file=config.LOG_DIR / "llm_exchanges.jsonl",
+    )
+    sql_tool = SQLTool(config.DB_PATH, max_rows=config.SQL_MAX_ROWS)
+    chunks = load_corpus(config.DOCS_DIR, config.CHUNK_SIZE, config.CHUNK_OVERLAP)
+    doc_tool = DocSearchTool(chunks, load_embedder(config.EMBEDDING_MODEL), top_k=config.TOP_K)
+    tools = {sql_tool.name: sql_tool, doc_tool.name: doc_tool}
+    system_prompt = build_system_prompt(sql_tool.get_schema())
+    agent = Agent(llm, tools, system_prompt,
+                  max_steps=config.MAX_STEPS, max_history_turns=config.MAX_HISTORY_TURNS)
+    return agent, llm
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    agent, llm = build_agent()
+    if not llm.is_available():
+        print("⚠️ Ollama ne répond pas : lancez l'application Ollama ou 'ollama serve'.")
+    print("DataPilot — tapez 'quit' pour sortir, 'reset' pour vider la mémoire.")
+    while True:
+        question = input("\nVous > ").strip()
+        if not question:
+            continue
+        if question.lower() == "quit":
+            break
+        if question.lower() == "reset":
+            agent.reset()
+            print("Mémoire vidée.")
+            continue
+        response = agent.ask(question)
+        for i, step in enumerate(response.steps, 1):
+            if step.kind == "tool":
+                print(f"  [{i}] {step.tool} : {str(step.tool_input)[:100]}")
+            elif step.kind == "error":
+                print(f"  [{i}] ⚠️ erreur : {step.content[:100]}")
+        print(f"\nDataPilot > {response.answer}")

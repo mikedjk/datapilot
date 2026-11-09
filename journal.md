@@ -270,3 +270,64 @@ On peut remplacer les vrais outils par des doublons (fakes) : sans base, sans FA
 
 Le natif apporte : un format de sortie garanti par l’API, avec des schémas typés pour les arguments. Il y a moins de parsing défensif et moins d’erreurs de JSON, surtout avec un petit modèle.
 la version manuelle t’a fait comprendre : que le LLM ne fait que proposer du texte et que c’est Python qui exécute. Elle a aussi montré les modes d’échec concrets (JSON mal formé, outil inventé, clé action_input à la place de input) et pourquoi un parseur tolérant et des messages d’erreur sont nécessaires. C’est ce qui garantit que la base ne peut pas être modifiée par le modèle.
+
+# Etape 10
+# Etape 10
+
+J'ai eu des difficultés à comprendre le code de cette étape (la boucle de l'agent,
+la différence entre le brouillon et la mémoire, et la construction de build_agent).
+Je me suis fait aider par l'IA pour écrire le code, puis je me suis fait expliquer
+chaque partie pour la comprendre.
+
+Ce que j'ai retenu : la méthode ask() répète une boucle. Le LLM propose une action
+en JSON, route_query l'exécute, puis le résultat est renvoyé au LLM sous la forme
+« OBSERVATION (outil) : ... ». Cela continue jusqu'à la réponse finale ou jusqu'à
+la limite d'étapes. Seule la réponse finale est gardée en mémoire longue.
+
+Point de contrôle 10 : [5 tests passés / résultat obtenu].
+- Clients VIP : outils [39], (référence : 39)
+- CA net 2025 : outils [166 091,86 €],(référence : 166 091,86 €)
+- Délai de retour VIP : outils [60 jours], (référence : 60 jours)
+- Panier moyen 2025 : outils [115,99],(référence : 115,99 €)
+- Clients actifs puis « et combien sont VIP ? » : outils [445],(référence : 445)
+
+1. Pourquoi limiter le nombre d'étapes ?
+Sans limite, si le LLM répète la même requête erronée, l'agent tournerait sans fin.
+Chaque tour prend plusieurs secondes en local et le brouillon grossit à chaque
+étape, jusqu'à saturer la fenêtre de contexte. Avec max_steps, l'agent s'arrête
+toujours : il force alors une réponse finale avec les informations déjà obtenues,
+ou dit clairement qu'il n'a pas réussi.
+
+2. Différence entre la mémoire longue et le brouillon
+La mémoire longue (Conversation) garde seulement les questions de l'utilisateur et
+les réponses finales, d'une question à l'autre. Le brouillon (scratchpad) contient
+les décisions du LLM et les observations d'une seule question, puis il est jeté.
+Si toutes les observations restaient en mémoire, un tableau SQL de 50 lignes
+remplirait vite la fenêtre de contexte : les appels deviendraient plus lents, le
+system prompt serait noyé et les anciens échanges sortiraient de la fenêtre.
+
+3. Pourquoi l'observation est envoyée avec le rôle user
+Le rôle assistant est réservé à ce que le modèle a lui-même écrit : y mettre un
+résultat d'outil lui ferait croire qu'il l'a dit. Le rôle system sert aux consignes
+permanentes placées en tête de conversation. Un résultat d'outil est une
+information qui vient de l'extérieur, comme une réponse à sa demande, donc le
+rôle user. Les API de tool calling natif ont un rôle « tool » dédié pour cela.
+
+4. Panier moyen : la documentation a-t-elle été consultée avant le SQL ?
+ Oui, l’agent a appelé search_docs d’abord (passage « Panier moyen » du glossaire),
+  puis query_database. Aucune modification de prompt n’était nécessaire
+
+5. Comment l'agent comprend « eux » dans « Et combien d'entre eux sont VIP ? »
+C'est la mémoire longue : la question précédente et sa réponse (445 clients actifs)
+sont renvoyées au LLM à chaque appel, il peut donc relier « eux » aux clients
+actifs.
+
+6. Que prouvent les tests avec un faux LLM, et que ne prouvent-ils pas ?
+Ils prouvent la mécanique : la boucle, l'ajout de l'observation au brouillon, la
+limite max_steps, l'auto-correction après une erreur de format, la mémoire entre
+deux questions et le message lisible quand le LLM est indisponible. Ils ne
+prouvent pas que le vrai modèle choisira le bon outil, écrira le bon SQL ou
+donnera le bon chiffre : le faux LLM répète des réponses écrites à l'avance. Il
+faut pour cela l'évaluation avec le vrai modèle (étape 14).
+
+Erreurs rencontrées. « 498 clients actifs au lieu de 445 : l’agent n’a pas consulté la documentation et a ignoré les critères livrée et 365 jours. Cause : la règle « search_docs avant le SQL » n’a pas été appliquée à « client actif ». »
