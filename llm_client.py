@@ -105,3 +105,28 @@ class LLMClient:
             return self.session.get(self.base_url + "/api/tags", timeout=3).ok
         except requests.RequestException:
             return False
+
+class Conversation:
+    """Mémoire conversationnelle sans framework : system prompt + fenêtre glissante."""
+
+    def __init__(self, system_prompt: str, max_turns: int = 6) -> None:
+        self.system_prompt = system_prompt
+        self.max_turns = max_turns
+        self.history: list[dict] = []
+
+    def add_user(self, content: str) -> None:
+        self.history.append({"role": "user", "content": content})
+
+    def add_assistant(self, content: str) -> None:
+        self.history.append({"role": "assistant", "content": content})
+
+    def messages(self) -> list[dict]:
+        # 2 messages par tour (question + réponse) ; nouvelle liste à chaque appel
+        window = self.history[-2 * self.max_turns:]
+        return [{"role": "system", "content": self.system_prompt}] + window
+
+    def estimated_tokens(self) -> int:
+        return sum(len(m["content"]) for m in self.messages()) // 4
+
+    def reset(self) -> None:
+        self.history = []
