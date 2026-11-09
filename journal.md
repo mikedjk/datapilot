@@ -103,3 +103,66 @@ Confidentialité : les questions peuvent contenir des données personnelles ou s
 Durée de conservation : ne pas garder indéfiniment, avec une purge ou une rotation automatique (par exemple 30 jours).
 Cadre légal (RGPD) : information des utilisateurs, finalité claire (debug et amélioration), droit d’accès et de suppression.
 Ne jamais commiter ce fichier dans Git, ce que fait déjà ton .gitignore avec logs/*.jsonl.
+
+# Etape 4
+
+j'au ecrire les TODO avec l'aide de l'IA mais j'ai compris globalement et passé le test donc tout est bon.
+
+
+1. Pourquoi max_turns * 2 ? Et si la fenêtre commençait par une réponse assistant ?
+Un tour contient deux messages (une question user et une réponse assistant), donc N tours = 2 × N messages. Si on gardait un nombre impair, la fenêtre pourrait commencer par une réponse sans sa question : le modèle verrait une réponse « dans le vide », sans savoir à quoi elle répond, ce qui le déroute et dégrade la qualité.
+
+2. Pourquoi le system prompt ne doit-il jamais sortir de la fenêtre ?
+C’est lui qui définit le rôle de l’agent, ses outils et le format JSON obligatoire. S’il disparaissait, l’agent oublierait comment répondre : plus de JSON, plus de règles de sécurité (SELECT uniquement, pas d’email client). C’est pourquoi il est ajouté séparément, en dehors de la découpe de l’historique.
+
+3. Fenêtre glissante, budget de tokens, résumé : laquelle pour un assistant de rédaction d’un rapport de 30 pages ?
+
+Fenêtre glissante : simple et prévisible, mais elle oublie tout ce qui est ancien (les consignes du début, la structure du rapport).
+Budget de tokens : plus précis, car on remplit la fenêtre jusqu’à une limite réelle en tokens, mais ça oublie aussi le début.
+Résumé des anciens échanges : on condense le passé en quelques lignes et on garde le récent en entier. Ça coûte un appel LLM supplémentaire et le résumé peut perdre des détails.
+
+Pour un rapport de 30 pages, je choisirais le résumé (éventuellement combiné avec un budget de tokens) : il faut conserver la structure, les décisions et le ton des parties déjà écrites, ce qu’une fenêtre glissante simple perdrait.
+
+4. Quand « caractères / 4 » se trompe-t-il beaucoup ?
+Le ratio dépend de la langue et du contenu. Le français avec accents, le code, les nombres, les tableaux markdown ou les langues non latines (chinois, arabe) se découpent en beaucoup plus de tokens par caractère. Par exemple, un long tableau de chiffres SQL peut contenir bien plus de tokens que longueur // 4 ne le suggère. Pour un chiffre fiable, il faut lire prompt_eval_count renvoyé par Ollama (ce que tu as vu à l’étape 2).
+
+# Etape 5
+
+# Etape 5
+Difficultés : j'avais collé mon code de test dans prompts.py (et nommé un fichier
+"import sqlite3.py"), ce qui relançait des appels au LLM à chaque import.
+Solution : prompts.py ne contient que le template et build_system_prompt ; le test est
+dans explorer/test_prompt.py. Premier test : timeout de 120 s, le modèle devait se charger
+et lire un prompt d'environ 2 200 tokens.
+Point de contrôle 5 validé : 3 JSON valides (query_database, search_docs, final_answer).
+Prompt : 8 882 caractères, environ 2 220 tokens.
+Modifications du prompt : aucune après le premier essai.
+
+1. Pourquoi du JSON plutôt que des phrases ? Que faire de « Je pense qu’il faudrait regarder dans la base » ?
+Un programme ne peut pas deviner une intention dans une phrase libre. Avec du JSON, action et input se lisent avec json.loads, sans ambiguïté. Une réponse comme « Je pense qu’il faudrait regarder… » n’est pas du JSON : parse_llm_output lève une ParseError. route_query la transforme alors en message d’erreur renvoyé au LLM, du type « réponds uniquement avec le JSON ». Le modèle peut ainsi se corriger, sans que le programme plante.
+
+2. À quoi sert thought ?
+Pour le modèle, écrire son raisonnement avant l’action l’aide à mieux choisir (il « réfléchit à voix haute »). Pour moi, c’est un outil de débogage : dans les journaux, je vois pourquoi il a choisi tel outil et je repère où le raisonnement part de travers.
+
+3. Pourquoi insérer le schéma avec {schema} ?
+Le schéma est lu directement dans la base par get_schema(). Il est donc toujours exact : si la base change, le prompt suit sans retouche. Le recopier à la main risquerait des fautes de frappe (une colonne mal orthographiée fait inventer de mauvaises requêtes) ou un schéma périmé.
+
+4. Quels pièges dans les rappels, et quelle erreur sans eux ?
+
+Accents des statuts : sans le rappel, le modèle écrit 'livree' et obtient 0 ligne.
+Dates en texte ISO : il utiliserait YEAR() (qui n’existe pas en SQLite) ou une comparaison fausse.
+Pas de colonne « montant » : il inventerait commandes.montant et ferait une erreur SQL. Il faut calculer quantite × prix_unitaire × (1 − remise/100).
+CA = commandes livrées seulement, sans frais de livraison : il inclurait les commandes annulées, retournées ou en cours, ce qui gonflerait le CA.
+Panier moyen avec COUNT(DISTINCT commande_id) : il diviserait par le nombre de lignes, et la jointure créerait des doublons.
+Pas d’email, SELECT uniquement : il pourrait afficher des emails ou accepter une demande de suppression.
+
+5. Pourquoi ne pas mettre « Combien de clients VIP avons-nous ? » dans les exemples ?
+Si la question et sa réponse figurent mot pour mot dans le prompt, le modèle les recopie sans raisonner. Le banc de test (étape 14) affichera alors 100 % sur cette question, alors qu’il mesure de la mémorisation et non de la compétence. Le score est trompeur. Il faut donc des exemples différents des questions d’évaluation (c’est pourquoi j’ai pris les canaux et le taux d’annulation).
+
+6. Le system prompt est-il une garantie ? Que fait le code s’il n’est pas respecté ?
+Non, c’est une consigne, pas une règle imposée : un petit modèle 7B peut l’ignorer (texte autour du JSON, mauvaise clé, outil inventé), et un utilisateur malveillant peut tenter une prompt injection. Le code doit donc se protéger lui-même :
+
+un parseur tolérant, avec renvoi d’un message d’erreur au LLM ;
+un routing qui refuse les outils inconnus ;
+une base ouverte en lecture seule avec validation du SQL ;
+une limite du nombre d’étapes.
