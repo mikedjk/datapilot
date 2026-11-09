@@ -126,7 +126,7 @@ Pour un rapport de 30 pages, je choisirais le résumé (éventuellement combiné
 4. Quand « caractères / 4 » se trompe-t-il beaucoup ?
 Le ratio dépend de la langue et du contenu. Le français avec accents, le code, les nombres, les tableaux markdown ou les langues non latines (chinois, arabe) se découpent en beaucoup plus de tokens par caractère. Par exemple, un long tableau de chiffres SQL peut contenir bien plus de tokens que longueur // 4 ne le suggère. Pour un chiffre fiable, il faut lire prompt_eval_count renvoyé par Ollama (ce que tu as vu à l’étape 2).
 
-# Etape 5
+
 
 # Etape 5
 Difficultés : j'avais collé mon code de test dans prompts.py (et nommé un fichier
@@ -166,3 +166,6 @@ un parseur tolérant, avec renvoi d’un message d’erreur au LLM ;
 un routing qui refuse les outils inconnus ;
 une base ouverte en lecture seule avec validation du SQL ;
 une limite du nombre d’étapes.
+
+# Etape 6
+Pas de difficultés
