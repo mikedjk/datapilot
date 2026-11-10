@@ -432,3 +432,165 @@ C'est acceptable pour un utilisateur : le message donne la cause et l'action à 
 sans jargon technique. Il manque un bouton pour réessayer sans retaper la question, et
 ce message d'erreur est enregistré dans la mémoire de la conversation comme une vraie
 réponse (point à améliorer).
+
+# Etape 13
+
+# Etape 13
+
+Difficultés : je suis resté bloqué sur cette étape et, par manque de temps, je ne l'ai
+pas terminée. Je la reprendrai plus tard.
+
+Ce qui est fait : ui.py personnalisé (description pour un responsable marketing, 6
+exemples dont 2 chiffrés, 2 de règle et 2 mixtes, pied de page sur les limites, bouton
+de copie des messages). L'interface démarre sur http://127.0.0.1:7860 et les 3 tests de
+l'étape 12 passent.
+
+Reste à faire : tester chacun des 6 exemples en dépliant les blocs 🔧, et répondre aux
+4 questions de réflexion (public de la description, intérêt d'une question mixte,
+information qui signale qu'une réponse peut être fausse, fonctionnalité à ajouter).
+
+
+# Etape 14
+(reformulé avec l'IA)
+Références calculées directement en SQL (indépendantes de l'agent) :
+{'nb_vip': 39, 'ca_2025': 166091.86, 'ca_2024': 93795.28, 'panier_2025': 115.99,
+'taux_retour_2025': 7.3, 'clients_actifs': 445}
+Elles correspondent à l'annexe A du guide.
+
+Le banc contient 12 questions : 3 chiffrées, 3 de règle, 3 mixtes, 3 pièges. Aucune
+n'est dans les exemples du prompt (les exemples portent sur les commandes mobile 2024 et
+le taux d'annulation).
+
+Scores avant modification (python evaluation.py avant), puis après (apres) :
+
+| catégorie | questions | routing avant | routing après | exactitude avant | exactitude après | durée moy. avant | durée moy. après |
+|---|---|---|---|---|---|---|---|
+| chiffrée | 3 | 100 % | 100 % | 100 % | 100 % | 138,1 s | 187,2 s |
+| règle | 3 | 100 % | 100 % | 100 % | 100 % | 86,4 s | 76,0 s |
+| mixte | 3 | 67 % | 100 % | 67 % | 67 % | 133,6 s | 151,6 s |
+| piège | 3 | 100 % | 100 % | à relire | à relire | 26,2 s | 22,5 s |
+| ensemble | 12 | 92 % (11/12) | 100 % (12/12) | 92 % (11/12) | 92 % (11/12) | 96,1 s | 109,3 s |
+
+Analyse de l'erreur :
+Question « Combien de clients actifs avons-nous au 31 décembre 2025 ? » (référence :
+445). Avant modification, l'agent a appelé seulement query_database (routing = False) et
+a répondu 493 clients, alors que le glossaire définit « client actif » comme un client
+ayant passé une commande livrée dans les 365 jours précédant le 31/12/2025. Le choix de
+l'outil était donc la première erreur (même problème qu'à l'étape 10, où j'avais obtenu
+498).
+
+Modification faite (une seule, détaillée dans l'en-tête de prompts.py) : j'ai renforcé la
+règle d'or du prompt. Avant : « en cas de doute sur la définition d'un indicateur,
+consulte search_docs ». Après : dès qu'une question porte sur un indicateur défini
+(chiffre d'affaires, panier moyen, taux, client actif, marge...), la première action est
+toujours search_docs, même si la formule semble connue.
+
+Résultat : le routing est passé de 92 % à 100 % (mixte de 67 % à 100 %) : l'agent lit
+maintenant la définition avant d'écrire le SQL. Mais l'exactitude n'a pas changé : il
+répond toujours 493 clients actifs. J'ai vérifié en SQL : 493 est exactement le nombre
+de clients ayant au moins une commande livrée sur tout l'historique 2024-2025. L'agent
+applique donc le filtre « livrée » mais oublie la fenêtre de 365 jours. La cause est
+passée d'un mauvais choix d'outil à un SQL incomplet : le symptôme correspond à la ligne
+« SQL faux (dates) » du tableau du guide, qui se corrige dans les rappels de prompts.py,
+pas dans le routing.
+Effets secondaires : la durée moyenne passe de 96 s à 109 s par question, car les
+questions de CA passent maintenant par search_docs avant le SQL (2 étapes de plus au
+total, de 2 à 3 étapes pour les deux CA).
+
+Questions piège relues à la main :
+- Capitale de l'Australie : avant, l'agent refusait simplement. Après, il refuse puis
+  répond quand même « Canberra » : le script marque True, mais ce n'est pas le
+  comportement voulu (hors périmètre).
+- Suppression des clients : refus correct dans les deux passages (SELECT uniquement).
+- Email du client 12 : refus correct pour confidentialité, avec proposition d'utiliser
+  le client_id.
+
+Piste suivante (non faite, une modification à la fois) : remplacer le rappel « Client
+actif = ... » de prompts.py par une formule SQL complète, avec le statut 'livrée' et la
+fenêtre date_commande > date('2025-12-31', '-365 days'), puis relancer le banc.
+
+1. Pourquoi calculer les références en SQL et non avec l'agent ?
+On ne corrige pas un élève avec ses propres réponses. Si les références venaient de
+l'agent, elles contiendraient ses erreurs (493 au lieu de 445) et le banc les
+validerait. Mes références sont des requêtes écrites et vérifiées à la main,
+indépendantes de l'agent, et comparables à l'annexe A du guide.
+
+2. Limites du critère « la réponse contient la valeur »
+Il compte juste une réponse fausse quand la valeur attendue apparaît par hasard :
+par exemple « 39 » dans « 139 clients » ou dans une phrase où 39 est un autre nombre,
+ou « 60 » dans « 60 % ». Il compte faux une réponse juste quand elle est écrite
+autrement : « environ 166 mille euros », « 7,30 % » au lieu de « 7,3 % », ou un nombre
+écrit en lettres.
+
+3. Pourquoi relire à la main les réponses aux questions piège ?
+Le script met True par défaut quand il n'y a pas de valeur attendue : il ne voit pas la
+qualité du refus. Ma relecture a trouvé un cas que le script ne détecte pas : à la
+question sur l'Australie, l'agent a refusé puis donné quand même la réponse (Canberra).
+Seule une relecture montre ce genre de comportement.
+
+4. 100 % sur une question qui figure dans les exemples du prompt
+Cela ne prouve rien : le modèle peut recopier l'exemple au lieu de raisonner, donc on
+mesure sa mémoire. Mon banc évite ce piège : aucune question n'est dans les exemples
+du prompt, et l'exemple que j'ai ajouté dans la règle d'or (le catalogue) n'est pas
+dans le banc. Pour le rendre plus exigeant : des reformulations, des questions à
+cheval sur plusieurs documents, des questions de suivi, plus de pièges.
+
+5. Une amélioration de 1 question sur 12 est-elle significative ?
+Non. Chaque question pèse 8 points, et le modèle varie d'un lancement à l'autre (par
+exemple, le taux de retour a pris 4 étapes avant et 3 après). Pour être sûr, il faudrait
+un banc plus large (50 à 100 questions) et répéter chaque question plusieurs fois pour
+voir si l'écart dépasse la variation naturelle. Ici, l'amélioration du routing (mixte de
+67 % à 100 %) repose sur une seule question.
+
+6. Modèle 7B plus lent mais plus juste : comment choisir ?
+Je regarderais l'usage et le coût d'une erreur : pour des chiffres utilisés en décision,
+l'exactitude prime, donc le 7B, en limitant la lenteur (indicateur de chargement,
+préchauffage du modèle). Si les questions sont simples et fréquentes, un modèle plus
+petit peut suffire. Le banc permet de trancher avec des mesures : scores par catégorie
+et durée moyenne pour chaque modèle (je n'ai testé que le 7B ici).
+
+
+# Etape 15
+
+# Etape 15 — Questions de réflexion finales
+
+1. Trois priorités si ShopNova voulait utiliser DataPilot dès lundi
+- Multi-utilisateurs : une conversation par session. Mon test à deux onglets a montré
+  qu'il n'y a qu'une seule mémoire partagée, donc deux utilisateurs verraient leurs
+  échanges mélangés. Il faut aussi gérer la file d'attente : Ollama traite une requête à
+  la fois, et une réponse prend de 1 à 3 minutes sur mon poste.
+- Sécurité et données personnelles : authentification, accès à la base par un rôle en
+  lecture seule sans la colonne email, et durée de conservation limitée pour le journal
+  des questions (RGPD).
+- Supervision de la qualité : relancer le banc de test régulièrement, car l'agent s'est
+  trompé sur les clients actifs (493 au lieu de 445). Il faut des alertes, la lecture
+  des journaux et un moyen de signaler une réponse fausse.
+
+2. Quand un tableau de bord est-il préférable ?
+Pour les indicateurs récurrents et validés (CA mensuel, suivi des retours), où les
+chiffres doivent être identiques pour tout le monde et sans erreur. Il donne aussi une
+vue d'ensemble visuelle, des comparaisons dans le temps et une réponse immédiate, alors
+que l'agent met plusieurs minutes et peut se tromper. L'assistant est utile pour les
+questions ponctuelles et les règles internes.
+
+3. Ce que j'ai compris en construisant l'agent à la main
+Le LLM ne fait que proposer du texte : c'est Python qui lit le JSON, exécute l'outil et
+renvoie l'observation. J'ai vu pourquoi il faut un parseur tolérant, des messages
+d'erreur renvoyés au modèle, et pourquoi la sécurité (lecture seule, validation du
+SQL) doit être dans le code et non dans le prompt. J'ai aussi compris que la mémoire
+consiste à renvoyer l'historique à chaque appel, ce qui explique la hausse des tokens
+et la lenteur. Un framework cacherait ces mécanismes.
+
+4. L'erreur la plus difficile à diagnostiquer
+Le nombre de clients actifs : 498 à l'étape 10, puis 493 au banc, au lieu de 445. L'erreur
+a changé de nature : d'abord aucun filtre, puis le statut « livrée » sans la fenêtre de
+365 jours, et le routing (ne pas lire la documentation) s'y ajoutait. Ce qui a aidé : les
+journaux des échanges avec le LLM, le calcul de la référence en SQL, et le fait de
+retrouver le 493 en testant des variantes de la requête.
+
+5. Une journée de plus
+Remplacer le rappel « Client actif » du prompt par la formule SQL complète (statut
+livrée et 365 jours), puis élargir le banc à une cinquantaine de questions répétées
+3 fois. Je mesurerais le succès par l'exactitude de la catégorie « mixte » (objectif :
+au moins 90 % stable sur les répétitions), avec une durée moyenne qui ne dépasse pas
+celle d'aujourd'hui.s

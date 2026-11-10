@@ -7,17 +7,24 @@ import gradio as gr
 
 TITLE = "DataPilot — l'assistant data analyst de ShopNova"
 DESCRIPTION = (
-    "Posez vos questions en français sur les ventes 2024-2025 de ShopNova "
-    "(chiffres, classements, évolutions) ou sur les règles internes "
-    "(définition des KPI, politique de retours, livraison, segmentation clients). "
-    "Les requêtes et les passages consultés sont affichés dans des blocs repliables."
+    "Posez vos questions en français sur les **ventes ShopNova 2024-2025** (chiffre d'affaires, "
+    "clients, retours, canaux…) ou sur les **règles internes** (définition des indicateurs, "
+    "politique de retours, livraison, segments clients). Chaque réponse s'appuie sur la base de "
+    "données ou la documentation : dépliez les blocs 🔧 pour voir la requête exécutée ou les "
+    "passages consultés."
+)
+FOOTER = (
+    "<small>Données de démonstration (ventes 2024-2025). L'assistant peut se tromper : "
+    "vérifiez les requêtes affichées avant toute décision. Une réponse peut prendre "
+    "une à deux minutes.</small>"
 )
 EXAMPLES = [
-    "Quel est le chiffre d'affaires net de 2025 ?",
-    "Comment est défini le taux de retour ?",
-    "Combien de clients ont le statut VIP ?",
-    "Quel est le panier moyen 2025 selon la définition officielle ?",
-    "Quel est le délai de retour pour un client VIP ?",
+    "Quel est le chiffre d'affaires net de 2025 ?",                  # chiffrée
+    "Combien de clients ont le statut VIP ?",                        # chiffrée
+    "Quel est le délai de retour pour un client VIP ?",              # règle
+    "À partir de quel montant la livraison est-elle offerte ?",      # règle
+    "Quel est le panier moyen 2025 selon la définition officielle ?",  # mixte
+    "Quel est le taux de retour 2025 ?",                             # mixte
 ]
 
 # Libellés des outils (les icônes seront personnalisées à l'étape 13)
@@ -92,12 +99,14 @@ def create_ui(agent) -> gr.Blocks:
         gr.Markdown(f"# {TITLE}")
         gr.Markdown(DESCRIPTION)
         chatbot = gr.Chatbot(label="Conversation", height=520,
-                             placeholder="Posez une question ou cliquez sur un exemple 👇")
+                             placeholder="Posez une question ou cliquez sur un exemple 👇",
+                             buttons=["copy"])
         with gr.Row():
             question = gr.Textbox(show_label=False, scale=8, placeholder="Votre question…")
             send_btn = gr.Button("Envoyer", variant="primary", scale=1)
             reset_btn = gr.Button("🔄 Réinitialiser", scale=1)
         gr.Examples(examples=EXAMPLES, inputs=question, label="Exemples de questions")
+        gr.Markdown(FOOTER)
 
         # Deux événements enchaînés : la question s'affiche tout de suite (rapide),
         # puis l'agent calcule la réponse (lent) pendant que Gradio montre un chargement.

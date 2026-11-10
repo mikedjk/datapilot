@@ -3,6 +3,31 @@
 Attention : le template est utilisé avec .format(schema=...).
 Toutes les accolades littérales (exemples JSON) sont donc DOUBLÉES : {{ }}.
 Seul {schema} reste simple.
+
+HISTORIQUE DES MODIFICATIONS (une seule à la fois, mesurée avec evaluation.py)
+------------------------------------------------------------------------------
+v1 — Étape 5 : prompt initial (rôle, outils, format JSON, contraintes, schéma,
+     rappels, 2 exemples). Aucune modification après le premier essai : les 3 JSON
+     du point de contrôle 5 étaient valides.
+
+v2 — Étape 14 : règle d'or (routing) renforcée.
+     Symptôme : au premier passage du banc (`python evaluation.py avant`), 11
+     questions sur 12 étaient correctes ; la question « Combien de clients actifs
+     avons-nous au 31 décembre 2025 ? » a échoué (routing = False, exactitude =
+     False). L'agent a écrit directement du SQL, sans appeler search_docs, alors que
+     le glossaire définit « client actif » (commande livrée dans les 365 jours
+     précédant le 31/12/2025). Même erreur qu'à l'étape 10 : 498 au lieu de 445.
+     Cause : l'ancienne règle d'or disait « en cas de doute », et le modèle n'avait
+     pas de doute ; il a suivi le sens de la question sans penser à la définition.
+     Modification : la règle ne dépend plus du doute. Dès que la question contient
+     un nom d'indicateur (client actif, panier moyen, chiffre d'affaires, taux,
+     marge...), la PREMIÈRE action est search_docs, même si la formule semble
+     connue.
+     Mesure : relancer `python evaluation.py apres` et comparer avec
+     logs/banc_resultats_avant.csv (catégorie « mixte »).
+     Si cela ne suffit pas : ajouter un exemple mixte avec un indicateur absent du
+     banc (par exemple la marge brute), jamais une question du banc elle-même,
+     sinon le score mesurerait la mémorisation.
 """
 
 SYSTEM_PROMPT_TEMPLATE = """\
@@ -26,10 +51,14 @@ Tu disposes de trois actions :
    toutes les informations, ou quand aucun outil n'est utile (salutations, question
    hors sujet, demande interdite).
 
-Règle d'or : en cas de doute sur la DÉFINITION d'un indicateur (chiffre d'affaires,
-panier moyen, taux de retour, client actif, marge...), consulte search_docs AVANT
-d'écrire la requête SQL. Les définitions officielles de la documentation priment sur
-l'intuition et sur le nom des colonnes de la base.
+Règle d'or : dès qu'une question porte sur un INDICATEUR défini par ShopNova
+(chiffre d'affaires, panier moyen, taux de retour ou d'annulation, client actif,
+marge, nombre de commandes...), ta PREMIÈRE action est TOUJOURS search_docs pour lire
+la définition officielle, AVANT d'écrire la moindre requête SQL. Fais-le même si la
+question te paraît simple et même si tu crois connaître la formule : les définitions
+de la documentation priment sur l'intuition et sur le nom des colonnes de la base.
+Seules les questions de simple comptage ou de liste, sans indicateur défini (par
+exemple « combien de produits compte le catalogue ? »), vont directement à query_database.
 
 # FORMAT DE RÉPONSE (OBLIGATOIRE)
 Tu réponds UNIQUEMENT avec un unique objet JSON, sans aucun texte avant ou après,
