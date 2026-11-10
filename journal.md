@@ -272,7 +272,6 @@ Le natif apporte : un format de sortie garanti par l’API, avec des schémas ty
 la version manuelle t’a fait comprendre : que le LLM ne fait que proposer du texte et que c’est Python qui exécute. Elle a aussi montré les modes d’échec concrets (JSON mal formé, outil inventé, clé action_input à la place de input) et pourquoi un parseur tolérant et des messages d’erreur sont nécessaires. C’est ce qui garantit que la base ne peut pas être modifiée par le modèle.
 
 # Etape 10
-# Etape 10
 
 J'ai eu des difficultés à comprendre le code de cette étape (la boucle de l'agent,
 la différence entre le brouillon et la mémoire, et la construction de build_agent).
@@ -289,7 +288,7 @@ Point de contrôle 10 : [5 tests passés / résultat obtenu].
 - CA net 2025 : outils [166 091,86 €],(référence : 166 091,86 €)
 - Délai de retour VIP : outils [60 jours], (référence : 60 jours)
 - Panier moyen 2025 : outils [115,99],(référence : 115,99 €)
-- Clients actifs puis « et combien sont VIP ? » : outils [445],(référence : 445)
+- Clients actifs puis « et combien sont VIP ? » : outils [498],(référence : 445)
 
 1. Pourquoi limiter le nombre d'étapes ?
 Sans limite, si le LLM répète la même requête erronée, l'agent tournerait sans fin.
@@ -331,3 +330,105 @@ donnera le bon chiffre : le faux LLM répète des réponses écrites à l'avance
 faut pour cela l'évaluation avec le vrai modèle (étape 14).
 
 Erreurs rencontrées. « 498 clients actifs au lieu de 445 : l’agent n’a pas consulté la documentation et a ignoré les critères livrée et 365 jours. Cause : la règle « search_docs avant le SQL » n’a pas été appliquée à « client actif ». »
+
+
+# Etape 11
+
+Point de contrôle 11 : 41 tests passés (étapes 3 à 10).
+
+Journaux (14 appels de l'agent, hors les 2 tests « Réponds juste OK » de l'étape 3) :
+- durée moyenne d'un appel : 59 s (médiane 40 s ; minimum 16 s ; maximum 223 s, le
+  premier appel, qui charge le modèle)
+- tokens lus : environ 2 880 par appel (de 2 507 à 3 419)
+- tokens générés : environ 85 par appel
+
+Analyse d'une erreur : à la question « Combien de clients actifs au 31 décembre
+2025 ? », l'agent a répondu 498 au lieu de 445. L'erreur s'est produite dès la
+première décision du LLM : il a écrit directement une requête SQL, sans appeler
+search_docs, alors que mon prompt demande de consulter la documentation avant tout
+indicateur défini. Sa requête comptait tous les clients ayant passé au moins une
+commande, quel que soit le statut, sans filtrer sur « livrée » ni sur les 365 jours
+précédant le 31/12/2025. La définition du glossaire n'a donc pas été appliquée.
+De plus, la réponse finale a mélangé le panier moyen de la question précédente avec
+les nouveaux chiffres : le modèle a recopié des éléments de la mémoire.
+
+1. Pourquoi un test qui utiliserait le vrai LLM serait-il « instable » ?
+Le modèle n'est pas déterministe : même avec une température basse, la même
+question peut donner une formulation ou un SQL différents d'un lancement à l'autre.
+Le test dépendrait aussi d'Ollama (démarré ? modèle chargé ?) et durerait de 20 s à
+plusieurs minutes. Un test doit être rapide et toujours donner le même résultat,
+sinon un échec ne dit plus si le code est cassé ou si le modèle a simplement varié.
+
+2. Pourquoi prompt_tokens augmente-t-il au fil des étapes d'une même question ?
+À chaque étape, tout le brouillon est renvoyé au LLM : le system prompt, l'historique,
+puis chaque décision du LLM et chaque observation reçue. Chaque étape ajoute donc du
+texte. Par exemple, pour le panier moyen, les tokens lus sont passés de 2 653 à
+3 120, puis à 3 419.
+
+3. Durée moyenne d'un appel sur mon poste, et conséquence pour l'interface
+En moyenne 59 s par appel sur mon poste (environ 32 s sans le premier chargement du
+modèle). Une question à trois étapes demande donc de 1 min 30 à 3 min d'attente.
+L'interface doit afficher la question tout de suite et montrer un indicateur de
+chargement, sinon l'utilisateur croit que l'application est bloquée. Afficher les
+étapes (requête SQL, documents consultés) aide aussi à patienter.
+
+4. Un test unitaire vert garantit-il que l'agent donnera le bon chiffre d'affaires ?
+Non. Les tests avec un faux LLM prouvent la mécanique (routing, boucle, mémoire,
+limite d'étapes, gestion des erreurs), mais le faux LLM répond ce qu'on lui a
+écrit à l'avance. Ils ne disent rien sur le choix des outils ni sur le SQL du vrai
+modèle. Preuve concrète : les 41 tests étaient verts alors que l'agent a répondu 498
+clients actifs au lieu de 445. Seule l'évaluation avec le vrai LLM sur des questions
+de référence (étape 14) mesure la justesse des réponses.
+
+# Etape 12
+
+# Etape 12
+
+ui.py écrit avec l'aide de l'IA, puis expliqué : message_text recolle le texte quand
+Gradio 6 renvoie une liste, steps_to_messages transforme les étapes de l'agent en
+blocs repliables, et create_ui enchaîne deux événements.
+Point de contrôle 12 : 3 tests passés ; interface ouverte sur http://127.0.0.1:7860 :
+la question s'affiche tout de suite, un indicateur tourne, la réponse arrive précédée
+d'un bloc repliable « 🔧 Requête SQL » ou « 🔧 Recherche documentaire ».
+Exemples testés : chiffre d'affaires net 2025 (166 091,86 €) et délai de retour VIP
+(60 jours).
+J'ai ajouté un pytest.ini (testpaths = tests) car pytest -q plantait en lisant mes
+scripts d'exploration (explorer/test_prompt.py appelle le LLM, et test_agent.py
+existait en double).
+
+1. Pourquoi deux événements enchaînés ?
+Avec une seule fonction, la question n'apparaîtrait qu'à la fin du calcul, donc après
+une ou plusieurs minutes. Le premier événement est instantané : il affiche la question
+et vide la saisie. Le second est lent : il appelle l'agent pendant que Gradio montre
+un indicateur de chargement. L'utilisateur voit tout de suite que sa demande est
+prise en compte.
+
+2. Quels fichiers modifier pour changer d'interface, ou de LLM ?
+Pour remplacer Gradio par Streamlit ou une application mobile : seulement ui.py (et
+son lancement), car l'agent ne connaît que ask() et reset(). Pour remplacer Ollama par
+une API en ligne : seulement llm_client.py (et les réglages dans config.py), car
+l'agent ne connaît que chat(messages, json_mode).
+
+3. Pourquoi montrer la requête SQL à un utilisateur métier ?
+Pour la confiance et la vérification : il voit d'où vient le chiffre (quelle table,
+quels filtres, quelle période). Un collègue qui connaît le SQL peut repérer une erreur,
+comme le 498 clients actifs de l'étape 10. Les blocs sont repliables : ils ne gênent
+pas ceux qui ne veulent que la réponse.
+
+4. Deux onglets, que constate-t-on sur la mémoire ?
+Ce que j'ai observé : dans l'onglet 2, l'agent a compris « eux » alors que je n'y avais
+pas posé la première question.
+Il n'existe qu'un seul objet Agent, créé au lancement de ui.py : tous les onglets
+partagent donc la même mémoire, et « Réinitialiser » vide la mémoire de tout le monde.
+En production, deux utilisateurs verraient leurs conversations se mélanger, et les
+informations de l'un pourraient apparaître dans les réponses de l'autre (problème de
+confidentialité). Il faudrait une conversation par session (par exemple un état Gradio
+par utilisateur).
+
+5. Que se passe-t-il si j'arrête Ollama ?
+L'interface ne plante pas. Elle affiche dans le chat : « Le moteur LLM est
+indisponible. Lancez l'application Ollama ou 'ollama serve', puis réessayez. »
+C'est acceptable pour un utilisateur : le message donne la cause et l'action à faire,
+sans jargon technique. Il manque un bouton pour réessayer sans retaper la question, et
+ce message d'erreur est enregistré dans la mémoire de la conversation comme une vraie
+réponse (point à améliorer).
